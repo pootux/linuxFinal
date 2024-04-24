@@ -1,47 +1,12 @@
-function getQuestions() {
-	echo "Kurulum aşamasında aşağıdaki soruları cevaplamanız ve işlemler bittikten sonra addVpnUser.sh dosyasını çalıştırarak kullanıcı adı ve şifre tanımlamanız gerekmektedir."
+function installOpenVPN() {
 
-	# Detect public IPv4 address and pre-fill for the user
 	IP=$(ip -4 addr | sed -ne 's|^.* inet \([^/]*\)/.* scope global.*$|\1|p' | head -1)
-
-	if [[ -z $IP ]]; then
-		# Detect public IPv6 address
-		IP=$(ip -6 addr | sed -ne 's|^.* inet6 \([^/]*\)/.* scope global.*$|\1|p' | head -1)
-	fi
 
 	APPROVE_IP=${APPROVE_IP:-n}
 
 	if [[ $APPROVE_IP =~ n ]]; then
-		read -rp "IP Adresi: " -e -i "$IP" IP
+		read -rp "IP Adresini onaylayın (Enter): " -e -i "$IP" IP
 	fi
-
-	# If $IP is a private IP address, the server must be behind NAT
-	if echo "$IP" | grep -qE '^(10\.|172\.1[6789]\.|172\.2[0-9]\.|172\.3[01]\.|192\.168)'; then
-		PUBLICIP=$(curl -s https://api.ipify.org)
-		until [[ $ENDPOINT != "" ]]; do
-			read -rp "Public IPv4 adresi veya hostname: " -e -i "$PUBLICIP" ENDPOINT
-		done
-	fi
-
-	echo ""
-	echo "IPv6 bağlantısı kontrol ediliyor..."
-	echo ""
-	# "ping6" and "ping -6" availability varies depending on the distribution
-	if type ping6 >/dev/null 2>&1; then
-		PING6="ping6 -c3 ipv6.google.com > /dev/null 2>&1"
-	else
-		PING6="ping -6 -c3 ipv6.google.com > /dev/null 2>&1"
-	fi
-	if eval "$PING6"; then
-		echo "Your host appears to have IPv6 connectivity."
-		SUGGESTION="y"
-	else
-		echo "Your host does not appear to have IPv6 connectivity."
-		SUGGESTION="n"
-	fi
-	echo ""
-
-	$IPV6_SUPPORT = "y"
 
 	echo ""
 	echo "Birinci Soru: Yayın yapılacak port numarasını seçiniz:"
@@ -63,11 +28,6 @@ function getQuestions() {
 		;;
 	esac
 
-	$PROTOCOL_CHOICE = 1
-	PROTOCOL="udp"
-	$COMPRESSION_ENABLED = "n"
-	$CUSTOMIZE_ENC = "n"
-
 	echo ""
 	echo "Hangi DNS çözücüyü kullanmak istersiniz?"
 	echo "   1) Mevcut sistem çözücüsü (from /etc/resolv.conf)"
@@ -76,42 +36,25 @@ function getQuestions() {
 	echo "   4) Google"
 	echo "   5) Yandex"
 
-	# Use default, sane and fast parameters
+	PROTOCOL="udp"
 	CIPHER="AES-128-GCM"
-	CERT_TYPE="1" # ECDSA
-	CERT_CURVE="prime256v1"
 	CC_CIPHER="TLS-ECDHE-ECDSA-WITH-AES-128-GCM-SHA256"
-	DH_TYPE="1" # ECDH
-	DH_CURVE="prime256v1"
 	HMAC_ALG="SHA256"
-	TLS_SIG="1" # tls-crypt
 
 	until [[ $DNS =~ ^[0-9]+$ ]] && [ "$DNS" -ge 1 ] && [ "$DNS" -le 6 ]; do
-		read -rp "DNS [1-5]: " -e -i 11 DNS
+		read -rp "DNS [1-5]: " -e -i 1 DNS
 	done
 
 	echo ""
-	echo "VPN ayarları hazır.."
+	echo "VPN kurulum parametreleri hazırlandı."
 	read -n1 -r -p " Kurulum işlemine geçmek için herhangi bir tuşa basınız..."
-}
-
-function installOpenVPN() {
-
-	getQuestions
 
 	# ip -4 route ls: Ipv4 yönlendirme tablosunu listeler.
 	# grep default: default kelimesini içeren satırları filtreler. Varsayılan ağ geçidini temsil eder.
 	# grep -Po '(?<=dev )(\S+)' : dev kelimesinden sonra gelen ve boşluk olmayan karakter dizisini yani ağ arabirim adını alır. Ağ arabiriminin adını döndürür.
 	# head -1: Birden fazla varsayılan ağ geçici varsa, yalnızca ilkini seçer.
-	# NIC: Bu değişkene varsayılan ağ arabiriminin adını atar.
+	# NIC: Bu değişkene varsayılan ağ arabiriminin adını atar. eth0 verisini ağ dosyasının adını verir.
 	NIC=$(ip -4 route ls | grep default | grep -Po '(?<=dev )(\S+)' | head -1)
-
-	# Bu ifade $NIC değişkeninin boş olup olmadığını kontrol eder. Eğer boşsa ve IPV6_SUPPORT değişkeni y olarak ayarlanmışsa bu koşul doğru olur.
-	# ip -6 route show default: Bu komut, IPv6 varsayılan ağ geçidini gösteren çıktıyı verir.
-	# sed -ne 's/^default .* dev \([^ ]*\) .*$/\1/p : Ipv6 varsayılan ağ geçidi çıktısından ağ arabirimi adını alır.
-	if [[ -z $NIC ]] && [[ $IPV6_SUPPORT == 'y' ]]; then
-		NIC=$(ip -6 route show default | sed -ne 's/^default .* dev \([^ ]*\) .*$/\1/p')
-	fi
 
 	#EPEL depolarını sisteme ekler. Bu depolar ek yazılım paketlerini kurmaya izin verir.	
 	yum install -y epel-release
@@ -121,7 +64,6 @@ function installOpenVPN() {
 
 	# Eski bir sürümün easy-rsa'inin varsayılan olarak kurulu olduğu durumları temizlemek için kullanılır.
 	rm -rf /etc/openvpn/easy-rsa/
-	
 
 	# Find out if the machine uses nogroup or nobody for the permissionless group
 	if grep -qs "^nogroup:" /etc/group; then
@@ -130,10 +72,8 @@ function installOpenVPN() {
 		NOGROUP=nobody
 	fi
 
-	# İndirilecek easy-rsa sürümünü belirler. Bu durumda sürüm 3.1.2 olarak ayarlanmış.
-	local version="3.1.2"
 	# Belirtilen sürümdeki easy-rsa'yı GitHub'dan indirir.
-	wget -O ~/easy-rsa.tgz https://github.com/OpenVPN/easy-rsa/releases/download/v${version}/EasyRSA-${version}.tgz
+	wget -O ~/easy-rsa.tgz https://github.com/OpenVPN/easy-rsa/releases/download/v3.1.2/EasyRSA-3.1.2.tgz
 	# Easy-rsa için dizini oluşturur.
 	mkdir -p /etc/openvpn/easy-rsa
 	# İndirilen easy-rsa arşivini çıkarır ve /etc/openvpn/easy-rsa dizinine yerleştirir.
@@ -144,10 +84,9 @@ function installOpenVPN() {
 	# Çalışma dizinini easy-rsa'nın kurulu olduğu dizine değiştirir.
 	cd /etc/openvpn/easy-rsa/ || return
 
+	#aşağıdaki ikiliye ihtiyaç var mı ? varsın içine mi yazıyor? Emin olacağım.
 	echo "set_var EASYRSA_ALGO ec" >vars
-	echo "set_var EASYRSA_CURVE $CERT_CURVE" >>vars
-	;;
-	
+	echo "set_var EASYRSA_CURVE prime256v1" >>vars
 
 	# Sunucu sertifikası için rastgele bir isim oluşturur.
 	SERVER_CN="cn_$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)"
@@ -166,7 +105,6 @@ function installOpenVPN() {
 	EASYRSA_CRL_DAYS=3650 ./easyrsa gen-crl
 
 	openvpn --genkey --secret /etc/openvpn/tls-crypt.key
-		;;
 
 	cp pki/ca.crt pki/private/ca.key "pki/issued/$SERVER_NAME.crt" "pki/private/$SERVER_NAME.key" /etc/openvpn/easy-rsa/pki/crl.pem /etc/openvpn
 
@@ -192,13 +130,6 @@ function installOpenVPN() {
 		else
 			RESOLVCONF='/etc/resolv.conf'
 		fi
-		# Obtain the resolvers from resolv.conf and use them for OpenVPN
-		sed -ne 's/^nameserver[[:space:]]\+\([^[:space:]]\+\).*$/\1/p' $RESOLVCONF | while read -r line; do
-			# Copy, if it's a IPv4 |or| if IPv6 is enabled, IPv4/IPv6 does not matter
-			if [[ $line =~ ^[0-9.]*$ ]] || [[ $IPV6_SUPPORT == 'y' ]]; then
-				echo "push \"dhcp-option DNS $line\"" >>/etc/openvpn/server.conf
-			fi
-		done
 		;;
 	2) 
 		# Cloudflare
@@ -224,18 +155,10 @@ function installOpenVPN() {
 
 	echo 'push "redirect-gateway def1 bypass-dhcp"' >>/etc/openvpn/server.conf
 
-	# IPv6 network settings if needed
-
-	echo 'server-ipv6 fd42:42:42:42::/112
-	tun-ipv6
-	push tun-ipv6
-	push "route-ipv6 2000::/3"
-	push "redirect-gateway ipv6"' >>/etc/openvpn/server.conf
 	echo "dh none" >>/etc/openvpn/server.conf
-	echo "ecdh-curve $DH_CURVE" >>/etc/openvpn/server.conf
+	echo "ecdh-curve prime256v1" >>/etc/openvpn/server.conf
 
 	echo "tls-crypt tls-crypt.key" >>/etc/openvpn/server.conf
-		;;
 
 	echo "crl-verify crl.pem
 	ca ca.crt
@@ -255,7 +178,6 @@ function installOpenVPN() {
 	mkdir -p /var/log/openvpn
 
 	echo 'net.ipv4.ip_forward=1' >/etc/sysctl.d/99-openvpn.conf
-	echo 'net.ipv6.conf.all.forwarding=1' >>/etc/sysctl.d/99-openvpn.conf
 
 	sysctl --system
 
@@ -267,12 +189,9 @@ function installOpenVPN() {
 		fi
 	fi
 
-	# Don't modify package-provided service
 	cp /usr/lib/systemd/system/openvpn-server@.service /etc/systemd/system/openvpn-server@.service
 
-	# Workaround to fix OpenVPN service on OpenVZ
 	sed -i 's|LimitNPROC|#LimitNPROC|' /etc/systemd/system/openvpn-server@.service
-	# Another workaround to keep using /etc/openvpn/
 	sed -i 's|/etc/openvpn/server|/etc/openvpn|' /etc/systemd/system/openvpn-server@.service
 
 	systemctl daemon-reload
@@ -288,24 +207,12 @@ iptables -I FORWARD 1 -i $NIC -o tun0 -j ACCEPT
 iptables -I FORWARD 1 -i tun0 -o $NIC -j ACCEPT
 iptables -I INPUT 1 -i $NIC -p $PROTOCOL --dport $PORT -j ACCEPT" >/etc/iptables/add-openvpn-rules.sh
 
-	echo "ip6tables -t nat -I POSTROUTING 1 -s fd42:42:42:42::/112 -o $NIC -j MASQUERADE
-ip6tables -I INPUT 1 -i tun0 -j ACCEPT
-ip6tables -I FORWARD 1 -i $NIC -o tun0 -j ACCEPT
-ip6tables -I FORWARD 1 -i tun0 -o $NIC -j ACCEPT
-ip6tables -I INPUT 1 -i $NIC -p $PROTOCOL --dport $PORT -j ACCEPT" >>/etc/iptables/add-openvpn-rules.sh
-
 	echo "#!/bin/sh
 iptables -t nat -D POSTROUTING -s 10.8.0.0/24 -o $NIC -j MASQUERADE
 iptables -D INPUT -i tun0 -j ACCEPT
 iptables -D FORWARD -i $NIC -o tun0 -j ACCEPT
 iptables -D FORWARD -i tun0 -o $NIC -j ACCEPT
 iptables -D INPUT -i $NIC -p $PROTOCOL --dport $PORT -j ACCEPT" >/etc/iptables/rm-openvpn-rules.sh
-
-	echo "ip6tables -t nat -D POSTROUTING -s fd42:42:42:42::/112 -o $NIC -j MASQUERADE
-ip6tables -D INPUT -i tun0 -j ACCEPT
-ip6tables -D FORWARD -i $NIC -o tun0 -j ACCEPT
-ip6tables -D FORWARD -i tun0 -o $NIC -j ACCEPT
-ip6tables -D INPUT -i $NIC -p $PROTOCOL --dport $PORT -j ACCEPT" >>/etc/iptables/rm-openvpn-rules.sh
 
 	chmod +x /etc/iptables/add-openvpn-rules.sh
 	chmod +x /etc/iptables/rm-openvpn-rules.sh
@@ -337,22 +244,22 @@ WantedBy=multi-user.target" >/etc/systemd/system/iptables-openvpn.service
 	echo "explicit-exit-notify" >>/etc/openvpn/client-template.txt
 
 	echo "remote $IP $PORT
-dev tun
-resolv-retry infinite
-nobind
-persist-key
-persist-tun
-remote-cert-tls server
-verify-x509-name $SERVER_NAME name
-auth $HMAC_ALG
-auth-nocache
-cipher $CIPHER
-tls-client
-tls-version-min 1.2
-tls-cipher $CC_CIPHER
-ignore-unknown-option block-outside-dns
-setenv opt block-outside-dns # Prevent Windows 10 DNS leak
-verb 3" >>/etc/openvpn/client-template.txt
+	dev tun
+	resolv-retry infinite
+	nobind
+	persist-key
+	persist-tun
+	remote-cert-tls server
+	verify-x509-name $SERVER_NAME name
+	auth $HMAC_ALG
+	auth-nocache
+	cipher $CIPHER
+	tls-client
+	tls-version-min 1.2
+	tls-cipher $CC_CIPHER
+	ignore-unknown-option block-outside-dns
+	setenv opt block-outside-dns # Prevent Windows 10 DNS leak
+	verb 3" >>/etc/openvpn/client-template.txt
 
 	newClient
 }
@@ -404,6 +311,7 @@ function newClient() {
 	else
 		homeDir="/root"
 	fi
+	
 
 	cp /etc/openvpn/client-template.txt "$homeDir/$CLIENT.ovpn"
 	{
@@ -422,8 +330,6 @@ function newClient() {
 		echo "<tls-crypt>"
 		cat /etc/openvpn/tls-crypt.key
 		echo "</tls-crypt>"
-		;;
-		esac
 	} >>"$homeDir/$CLIENT.ovpn"
 
 	echo ""
@@ -470,13 +376,13 @@ function revokeClient() {
 }
 
 function manageMenu() {
-	echo "potuX VPN Kurulum Aracı v1.1 | Hoşgeldiniz..."
-	echo "Lütfen aşağıdaki menüden yapmak istediğiniz işlemi seçin. "
+	echo "potuX VPN Kurulum Aracı v1.0 | Hoşgeldiniz!"
+	echo "Lütfen aşağıdaki menüden yapmak istediğiniz işlemi seçiniz. "
 	echo ""
 	echo "Lütfen yapmak istediğiniz işlemi seçiniz."
 	echo "   1) Yeni Kullanıcı Oluştur"
 	echo "   2) Kullanıcıyı Yasakla"
-	echo "   2) VPN Server Kur"
+	echo "   3) VPN Server Kur"
 	echo "   4) Çıkış Yap"
 
 	until [[ $MENU_OPTION =~ ^[1-4]$ ]]; do
